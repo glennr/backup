@@ -3,9 +3,10 @@
     "retention": {
       "keepLatest": 10,
       "keepHourly": 24,
-      "keepDaily": 30,
+      "keepDaily": 31,
       "keepWeekly": 8,
-      "keepMonthly": 1200
+      "keepMonthly": 13,
+      "keepAnnual": 50
     },
     "files": {
       "ignore": [

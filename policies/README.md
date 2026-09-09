@@ -4,7 +4,7 @@
 `hosts/<hostname>.json` can override a host or source policy. A source-specific `files.ignore`
 replaces, rather than extends, the global ignore list.
 
-Retention keeps 10 latest, 24 hourly, 30 daily, 8 weekly, and 1,200 monthly snapshots.
+Retention keeps 10 latest, 24 hourly, 31 daily, 8 weekly, 13 monthly, and 50 annual snapshots.
 Scheduling is manual because systemd runs snapshots.
 
 The global policy excludes caches, build output, dependency directories, package and disk-image
