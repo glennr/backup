@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# On the maintenance owner, fails for stale hosts or a halved snapshot count. The count state
+# persists until a successful check or manual acknowledgement removes it.
+set -euo pipefail
+. "$(dirname "$(readlink -f "$0")")/env.sh"
+state="${STATE_DIRECTORY:-/var/lib/kopia}/snapshot-count"
+
+owner=$(kopia maintenance info --json | jq -er .owner)
+[ "$owner" = "root@$HOST" ] || { echo "not the maintenance owner ($owner is); nothing to do"; exit 0; }
+
+snaps=$(kopia snapshot list -a --json)
+now=$(date +%s); max=$((MAX_SNAPSHOT_AGE_HOURS * 3600)); rc=0
+while IFS=$'\t' read -r host newest; do
+  age=$(( now - $(date -d "$newest" +%s) ))
+  if [ "$age" -gt "$max" ]; then echo "STALE: $host newest snapshot is $((age / 3600))h old ($newest)"; rc=1
+  else echo "ok: $host $((age / 3600))h"; fi
+done < <(jq -r 'group_by(.source.host)[] | [.[0].source.host, (map(.endTime) | max)] | @tsv' <<<"$snaps")
+
+count=$(jq length <<<"$snaps"); prev=$(cat "$state" 2>/dev/null || echo 0)
+if [ "$count" -lt $((prev / 2)) ]; then
+  echo "SHRUNK: $count snapshots, was $prev. Retention trims a few a day; this is not that. rm $state to acknowledge."; rc=1
+else
+  mkdir -p "$(dirname "$state")"; echo "$count" > "$state"; echo "ok: $count snapshots (was $prev)"
+fi
+exit $rc

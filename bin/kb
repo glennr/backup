@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Runs Kopia with the configuration and credentials for this host.
+set -euo pipefail
+. "$(dirname "$(readlink -f "$0")")/env.sh"
+exec kopia "$@"

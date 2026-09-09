@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Runs one snapshot or verification job at a time. `online` is the systemd condition that skips
+# scheduled work while the B2 endpoint is unavailable.
+set -euo pipefail
+. "$(dirname "$(readlink -f "$0")")/env.sh"
+job="${1:?usage: $0 online|snapshot|verify}"
+if [ "$job" = online ]; then getent ahosts "$B2_ENDPOINT" >/dev/null; exit; fi   # ExecCondition: offline = skip the run, not a failure
+
+lock="${STATE_DIRECTORY:-/var/lib/kopia}/job.lock"
+mkdir -p "$(dirname "$lock")"
+exec 9>"$lock"
+flock -n 9 || { echo "waiting: another kopia job holds $lock ($(pgrep -d, -x kopia || echo pid unknown))" >&2; flock 9; }
+case "$job" in
+  snapshot) exec kopia snapshot create "${SOURCES[@]}" ;;   # fd 9 stays open in kopia, so the lock lasts the whole run
+  verify)   exec kopia snapshot verify --verify-files-percent="$VERIFY_PERCENT" ;;
+  *) echo "usage: $0 online|snapshot|verify" >&2; exit 1 ;;
+esac

@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Installs dependencies, the root-owned checkout, and systemd units. Apt hosts use Kopia's signed
+# repository; other hosts use the configured release tarball and its published checksum only.
+set -euo pipefail
+here=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
+. "$here/bin/env.sh"
+[ "$(id -u)" = 0 ] || { echo "needs root: sudo bin/install" >&2; exit 1; }
+case "$(uname -m)" in x86_64) arch=x64 ;; aarch64) arch=arm64 ;; *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;; esac
+apt=; command -v apt-get >/dev/null && apt=1
+
+if command -v kopia >/dev/null; then echo "kopia already installed: $(kopia --version)"
+elif [ -n "$apt" ]; then
+  install -d -m 755 /etc/apt/keyrings
+  curl -fsSL https://kopia.io/signing-key | gpg --dearmor --batch --yes -o /etc/apt/keyrings/kopia-keyring.gpg
+  echo "deb [signed-by=/etc/apt/keyrings/kopia-keyring.gpg] http://packages.kopia.io/apt/ stable main" \
+    > /etc/apt/sources.list.d/kopia.list
+  apt-get update -qq
+  apt-get install -y -qq kopia
+  echo "installed: $(kopia --version)"
+else
+  base="https://github.com/kopia/kopia/releases/download/v$KOPIA_VERSION"; tarball="kopia-$KOPIA_VERSION-linux-$arch.tar.gz"
+  tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+  curl -fsSL -o "$tmp/$tarball" "$base/$tarball"
+  curl -fsSL -o "$tmp/checksums.txt" "$base/checksums.txt"
+  (cd "$tmp" && sha256sum -c --ignore-missing --quiet checksums.txt)
+  tar -xzf "$tmp/$tarball" -C "$tmp"
+  install -m 755 "$tmp"/kopia-*/kopia /usr/local/bin/kopia
+  echo "installed: $(kopia --version)"
+fi
+
+if ! command -v jq >/dev/null; then
+  [ -n "$apt" ] || { echo "jq is missing; install it with your package manager" >&2; exit 1; }
+  apt-get install -y -qq jq
+fi
+
+install -d -m 755 /opt/backup
+rsync -a --delete --exclude .git --chown=root:root --chmod=D755,F644 "$BACKUP_DIR/" /opt/backup/
+chmod 755 /opt/backup/bin/*
+ln -sf /opt/backup/bin/kb /usr/local/bin/kb
+install -d -m 700 /etc/kopia /var/log/kopia
+install -m 644 "$BACKUP_DIR"/systemd/* /etc/systemd/system/
+systemctl daemon-reload

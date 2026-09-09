@@ -1,0 +1,17 @@
+{
+  "root@mia:/srv": {
+    "files": {
+      "ignore": [
+        "**/minecraft/*/minecraft_server.*.jar",
+        "**/minecraft/*/libraries",
+        "**/minecraft/*/versions",
+        "**/minecraft/*/logs",
+        "**/minecraft/*/.cache",
+        "**/minecraft/*/.rcon-cli.yaml",
+        "**/minecraft/*/.rcon-cli.env",
+        "**/minecraft/*/world/session.lock",
+        "**/minecraft/bkp"
+      ]
+    }
+  }
+}

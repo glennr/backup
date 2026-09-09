@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Sends failure notifications to logged-in users, or wall as a fallback. It names only the unit;
+# potentially sensitive paths remain in the root-only journal.
+set -uo pipefail
+unit="${1:-kopia}"
+sent=0
+while read -r uid user; do
+  [ "$uid" -ge 1000 ] || continue                 # skip greeters (gdm/sddm) and system accounts
+  bus="/run/user/$uid/bus"; [ -S "$bus" ] || continue
+  runuser -u "$user" -- env DBUS_SESSION_BUS_ADDRESS="unix:path=$bus" \
+    notify-send -u critical -a kopia "Backup failed: $unit" "sudo journalctl -u $unit" && sent=1
+done < <(loginctl list-sessions --no-legend | awk '{print $2, $3}' | sort -u)
+[ "$sent" = 1 ] || echo "kopia: $unit failed. See: journalctl -u $unit" | wall

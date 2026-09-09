@@ -1,0 +1,6 @@
+[Unit]
+Description=desktop notification that %i failed
+
+[Service]
+Type=oneshot
+ExecStart=/opt/backup/bin/notify %i

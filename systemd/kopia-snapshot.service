@@ -1,0 +1,36 @@
+[Unit]
+Description=kopia snapshot of configured sources
+After=network-online.target
+Wants=network-online.target
+OnFailure=kopia-notify@%n.service
+
+[Service]
+Type=oneshot
+ExecCondition=/opt/backup/bin/job online
+ExecStart=/opt/backup/bin/job snapshot
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/etc/kopia
+StateDirectory=kopia
+CacheDirectory=kopia
+LogsDirectory=kopia
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+Nice=19
+IOSchedulingClass=idle

@@ -1,0 +1,10 @@
+[Unit]
+Description=monthly kopia verify
+
+[Timer]
+OnCalendar=monthly
+Persistent=true
+RandomizedDelaySec=1h
+
+[Install]
+WantedBy=timers.target

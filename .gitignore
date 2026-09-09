@@ -1,0 +1,5 @@
+# Secrets never live in this repo; they are files under /etc/kopia. Belt and braces:
+*.config
+*.key
+*.pem
+*.kopia-password

@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# What the ignore rules keep and drop, per top-level entry of one home directory.
+# Usage: bin/kopia-audit.sh [DIR]   (default: your own home; needs read access to DIR)
+# Uses policies/global.json from this checkout, so edit rules and audit before `sudo make`.
+# Runs kopia against a throwaway repository in a temp dir; never touches /etc/kopia or the
+# real repository. IN is kopia's own `snapshot estimate` for the entry with the rules applied
+# as they would be for the /home source (anchors rewritten from /*/<entry>/ to /), including
+# the SRC_CAP file-size cap on `src`. OUT is on-disk size minus IN: estimate does not size
+# excluded directories. Rounded to what kopia prints (one decimal), so small entries are ±5%.
+set -euo pipefail
+here=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
+dir=${1:-$HOME}; dir=${dir%/}
+rules="$here/policies/global.json"
+cap=${SRC_CAP:-1073741824}
+for t in kopia jq numfmt du; do command -v "$t" >/dev/null || { echo "needs $t" >&2; exit 1; }; done
+
+tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+export KOPIA_CONFIG_PATH="$tmp/kopia.config" KOPIA_PASSWORD="throwaway" KOPIA_CACHE_DIRECTORY="$tmp/cache" \
+       KOPIA_CHECK_FOR_UPDATES=false KOPIA_BYTES_STRING_BASE_2=true
+kopia repository create filesystem --path "$tmp/repo" >/dev/null 2>&1
+jq -r '."(global)".files.ignore[]' "$rules" > "$tmp/rules"
+
+tobytes() { awk -v v="$1" -v u="$2" 'BEGIN{m["B"]=1;m["KiB"]=2^10;m["MiB"]=2^20;m["GiB"]=2^30;m["TiB"]=2^40; printf "%.0f", v*m[u]}'; }
+estimate_in() { # $1 entry path, $2 entry name -> bytes kopia would include
+  local e=$2 extra=""
+  [ "$e" = src ] && extra=",\"maxFileSize\":$cap"
+  { grep -v '^!\?/' "$tmp/rules"; grep "^!\?/\*/$e/" "$tmp/rules" | sed "s#^\(!\?\)/\*/$e/#\1/#"; } \
+    | jq -R . | jq -s "{\"(global)\":{\"files\":{\"ignore\":.,\"ignoreCacheDirs\":true,\"oneFileSystem\":true$extra}}}" \
+    | kopia policy import --from-file /dev/stdin >/dev/null
+  local line; line=$(kopia snapshot estimate "$1" 2>/dev/null | grep -m1 'Snapshot includes' || true)
+  [ -n "$line" ] || { echo 0; return; }
+  # shellcheck disable=SC2046
+  tobytes $(sed -E 's/.*total size ([0-9.]+) ([A-Za-z]+).*/\1 \2/' <<<"$line")
+}
+
+tin=0; tout=0; rows=()
+shopt -s nullglob dotglob
+for path in "$dir"/*; do
+  e=$(basename "$path"); [ "$e" = .kopiaignore ] && continue
+  disk=$(du -sb "$path" 2>/dev/null | cut -f1)
+  if [ ! -d "$path" ] || [ -L "$path" ]; then in=$disk
+  elif grep -qxF "/*/$e/" "$tmp/rules"; then in=0
+  else in=$(estimate_in "$path" "$e"); fi
+  out=$(( disk > in ? disk - in : 0 ))
+  tin=$((tin+in)); tout=$((tout+out))
+  [ "$in" -ge 1048576 ] || [ "$out" -ge 1048576 ] || continue
+  rows+=("$(printf '%s\t%s\t%s\t%s' "$in" "$e" "$(numfmt --to=iec "$in")" "$(numfmt --to=iec "$out")")")
+done
+printf '%-24s %8s %8s\n' "$dir/<entry>" IN OUT
+printf '%s\n' "${rows[@]}" | sort -rn | awk -F'\t' '{printf "%-24s %8s %8s\n", $2, $3, $4}'
+printf '%-24s %8s %8s\n' "TOTAL" "$(numfmt --to=iec "$tin")" "$(numfmt --to=iec "$tout")"
+echo "(entries under 1 MiB both ways omitted; IN is kopia's estimate with the rules and the src cap, OUT is disk minus IN)"

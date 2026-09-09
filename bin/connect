@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Connects this host or, after confirmation, creates the shared repository. Creation requires
+# the configured object-lock retention and makes this host the maintenance owner.
+set -euo pipefail
+. "$(dirname "$(readlink -f "$0")")/env.sh"
+
+[ -n "$KOPIA_PASSWORD" ] || { echo "no repository password in $KOPIA_ETC; run 'sudo make password'" >&2; exit 1; }
+[ -n "$AWS_ACCESS_KEY_ID" ] && [ -n "$AWS_SECRET_ACCESS_KEY" ] || { echo "no B2 key in $KOPIA_ETC; run 'sudo make key'" >&2; exit 1; }
+[ -n "${B2_BUCKET:-}" ] && [ -n "${B2_ENDPOINT:-}" ] || { echo "B2_BUCKET or B2_ENDPOINT empty in config" >&2; exit 1; }
+if [ -f "$KOPIA_CONFIG_PATH" ]; then
+  echo "already connected via $KOPIA_CONFIG_PATH ('sudo make disconnect' first to change repositories)"; exit 0
+fi
+
+backend=(s3 --bucket="$B2_BUCKET" --endpoint="$B2_ENDPOINT" ${B2_REGION:+--region="$B2_REGION"})
+client=(--no-persist-credentials --override-hostname="$HOST" --override-username=root
+        --cache-directory="$KOPIA_CACHE_DIRECTORY")
+
+if out=$(kopia repository connect "${backend[@]}" "${client[@]}" 2>&1); then
+  echo "$out"
+elif [[ "$out" == *"repository not initialized"* ]]; then
+  echo "bucket $B2_BUCKET has no repository yet."
+  if [ "${KOPIA_CREATE:-}" != yes ]; then
+    read -rp "create a NEW repository there, object lock $B2_RETENTION_MODE $B2_RETENTION_PERIOD, this machine as maintenance owner? [y/N] " a
+    [[ "$a" =~ ^[Yy] ]] || { echo "not created" >&2; exit 1; }
+  fi
+  kopia repository create "${backend[@]}" "${client[@]}" --encryption=AES256-GCM-HMAC-SHA256 \
+    --retention-mode="$B2_RETENTION_MODE" --retention-period="$B2_RETENTION_PERIOD"
+  kopia maintenance set --extend-object-locks=true
+else
+  echo "$out" >&2; exit 1
+fi
+kopia repository status
