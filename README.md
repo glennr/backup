@@ -41,6 +41,10 @@ sudo make ui                     # temporary UI on localhost
 `config/hosts/<hostname>.conf` overrides it. `SOURCES` in a host file replaces the default;
 use `SOURCES+=(...)` to add a source.
 
+`RETIRED_HOSTS` lists hosts that have been decommissioned. Their snapshots stay in the
+repository and stay restorable, and they still count toward `make check`'s shrink guard; only
+the freshness check skips them, so a retired host does not fail the daily check forever.
+
 Policies are imported into the shared repository, first from `policies/global.json` and then
 from an optional host file. Do not use Kopia's `--delete-other-policies`: it would remove
 policies belonging to other hosts. See [policies/README.md](policies/README.md).

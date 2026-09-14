@@ -13,6 +13,7 @@ check_one() {
   snaps=$(kopia snapshot list -a --json)
   now=$(date +%s); max=$((MAX_SNAPSHOT_AGE_HOURS * 3600))
   while IFS=$'\t' read -r host newest; do
+    if [[ " ${RETIRED_HOSTS[*]:-} " == *" $host "* ]]; then echo "retired: $host (last $newest)"; continue; fi
     age=$(( now - $(date -d "$newest" +%s) ))
     if [ "$age" -gt "$max" ]; then echo "STALE: $host newest snapshot is $((age / 3600))h old ($newest)"; rc=1
     else echo "ok: $host $((age / 3600))h"; fi
