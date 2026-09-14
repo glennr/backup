@@ -50,11 +50,11 @@ start: root ## snapshot now via the timer's unit: background, sandboxed, journal
 log: ## follow the snapshot unit's journal (U=kopia-check.service for another unit)
 	journalctl -fu $(or $(U),kopia-snapshot.service)
 
-progress: root ## the running snapshot: elapsed time, source, kopia's counters and ETA (updated every 30s)
-	@systemctl -q is-active kopia-snapshot.service || { echo "kopia-snapshot.service is not running"; exit 0; }
-	@s=$$(date -d "$$(systemctl show -p ExecMainStartTimestamp --value kopia-snapshot.service)" +%s); e=$$(( $$(date +%s) - s )); \
-	printf 'running %dh%02dm, pid %s\n' $$((e/3600)) $$((e%3600/60)) "$$(systemctl show -p MainPID --value kopia-snapshot.service)"
-	@cat /var/lib/kopia/progress 2>/dev/null || echo "no progress file yet: kopia writes it 30s in, and only for runs started after this target existed"
+progress: root ## the running snapshot: elapsed time, repository, source, kopia's counters and ETA (updated every 30s)
+	@case $$(systemctl show -p ActiveState --value kopia-snapshot.service) in active|activating) ;; *) echo "kopia-snapshot.service is not running"; exit 0 ;; esac; \
+	s=$$(date -d "$$(systemctl show -p ExecMainStartTimestamp --value kopia-snapshot.service)" +%s); e=$$(( $$(date +%s) - s )); \
+	printf 'running %dh%02dm, pid %s\n' $$((e/3600)) $$((e%3600/60)) "$$(systemctl show -p MainPID --value kopia-snapshot.service)"; \
+	cat /var/lib/kopia/progress 2>/dev/null || echo "no progress file yet: kopia writes it 30s in, and only for runs started after this target existed"
 
 verify: root ## read back a sample of file data and check it
 	$(PREFIX)/bin/job verify
