@@ -34,14 +34,20 @@ connect_one() {
       echo "$out" >&2; return 1
     fi
   else
-    local backend=(filesystem --path="$LOCAL_REPO")
-    if [ -e "$LOCAL_REPO/kopia.repository" ]; then
-      kopia repository connect "${backend[@]}" "${client[@]}"
-    else
+    local backend=(filesystem --path="$LOCAL_REPO") out
+    # Ask kopia whether a repository is there, as the b2 branch does. Testing for a blob file by
+    # name cannot work: the filesystem backend suffixes them (kopia.repository.f) and sharded
+    # layouts move them, so a name test reports "no repository" for a perfectly good one and
+    # offers to create a second over the top.
+    if out=$(kopia repository connect "${backend[@]}" "${client[@]}" 2>&1); then
+      echo "$out"
+    elif [[ "$out" == *"repository not initialized"* || "$out" == *"cannot access storage path"* ]]; then
       echo "$LOCAL_REPO has no repository yet."
       confirm "create a NEW repository there, this machine as maintenance owner?"
       mkdir -p "$LOCAL_REPO" && chmod 700 "$LOCAL_REPO"
       kopia repository create "${backend[@]}" "${client[@]}" --encryption=AES256-GCM-HMAC-SHA256
+    else
+      echo "$out" >&2; return 1
     fi
   fi
   kopia repository status
