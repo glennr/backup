@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Runs Kopia with the configuration and credentials for this host.
+# Runs Kopia with the configuration and credentials for this host, against repository $REPO
+# (default b2): `sudo kb snapshot list`, `sudo REPO=local kb snapshot list`.
 set -euo pipefail
 . "$(dirname "$(readlink -f "$0")")/env.sh"
 exec kopia "$@"

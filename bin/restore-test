@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Restores the newest snapshot of DIR (default /etc) from each repository into a temporary
+# directory under /var/tmp and diffs it against the live tree. 0 differences expected, apart
+# from files changed since the snapshot. Usage: restore-test [DIR]
+set -euo pipefail
+. "$(dirname "$(readlink -f "$0")")/env.sh"
+dir=${1:-/etc}; dir=${dir%/}
+
+restore_one() {
+  local tmp diffs n=0
+  tmp=$(mktemp -d /var/tmp/kopia-restore.XXXXXX); trap "rm -rf '$tmp'" EXIT
+  kopia restore "root@$HOST:$dir" "$tmp"
+  diffs=$(diff -rq "$dir" "$tmp") || true
+  if [ -n "$diffs" ]; then echo "$diffs"; n=$(wc -l <<<"$diffs"); fi
+  echo "$n difference(s) between $dir and its newest $REPO snapshot"
+  [ "$n" -eq 0 ] || echo "(0 expected, unless files changed since the snapshot)"
+}
+
+for_each_repo restore_one

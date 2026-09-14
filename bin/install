@@ -38,5 +38,8 @@ rsync -a --delete --exclude .git --chown=root:root --chmod=D755,F644 "$BACKUP_DI
 chmod 755 /opt/backup/bin/*
 ln -sf /opt/backup/bin/kb /usr/local/bin/kb
 install -d -m 700 /etc/kopia /var/log/kopia
+# one-time renames from before the second repository existed
+if [ -f /etc/kopia/repository.config ] && [ ! -e /etc/kopia/b2.config ]; then mv /etc/kopia/repository.config /etc/kopia/b2.config; fi
+if [ -f /var/lib/kopia/snapshot-count ] && [ ! -e /var/lib/kopia/snapshot-count.b2 ]; then mv /var/lib/kopia/snapshot-count /var/lib/kopia/snapshot-count.b2; fi
 install -m 644 "$BACKUP_DIR"/systemd/* /etc/systemd/system/
 systemctl daemon-reload

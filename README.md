@@ -32,8 +32,8 @@ sudo kb restore <id> /tmp/restore
 sudo make ui                     # temporary UI on localhost
 ```
 
-`kb` runs Kopia with this host's configuration and secrets. `make log` follows the snapshot
-journal. Use `git pull && sudo make` to update another host.
+`kb` runs Kopia with this host's configuration and secrets against the B2 repository
+(`REPO=local` for the local one, below). `make log` follows the snapshot journal. Use `git pull && sudo make` to update another host.
 
 ## Configuration
 
@@ -48,25 +48,27 @@ policies belonging to other hosts. See [policies/README.md](policies/README.md).
 ## Local repository
 
 `LOCAL_REPO` in a host config names a directory on a local disk (its parent must be a
-mountpoint) that holds a second repository, used for fast restores and OS migrations. It is
-independent of the B2 connection: same password, same sources, same policies, its own config
-file (`/etc/kopia/local.config`) and cache. Nothing schedules it; run it by hand.
+mountpoint) that holds a second, independent repository: same password, same sources, same
+policies, its own config file (`/etc/kopia/local.config`) and cache. It is not a mirror of B2.
+Every job writes or reads both repositories in turn, B2 first, and fails, with the usual
+notification, if either is unavailable: nothing is skipped because a disk is unmounted or B2
+is unreachable. `sudo make connect` offers to create it, `make status`, `make check` and
+`make verify` cover it, and `REPO=local` points single-repository commands at it:
 
 ```sh
-sudo make local-create        # new repository at LOCAL_REPO, policies imported
-sudo make local-connect       # join an existing one (after a reinstall, or from another OS)
-sudo make local-snapshot      # snapshot SOURCES into it, foreground
-sudo make local-verify        # read back every file
-sudo make local-restore-test  # restore newest /etc snapshot to a temp dir, diff against live (DIR=/home/x for another)
-sudo make local-status
-sudo KOPIA_CONFIG_PATH=/etc/kopia/local.config kb snapshot list   # any other kopia command against it
+sudo REPO=local kb snapshot list                          # any kopia command against it
+sudo REPO=local kb snapshot verify --verify-files-percent=100
+sudo REPO=local make ui
+sudo make restore-test                                    # restore newest /etc from each repository, diff against live
+sudo DIR=/home/x make restore-test
 ```
 
-Restoring onto a fresh OS: install `kopia`, `jq` and `rsync`, mount the disk at the same path,
-clone this repo, write the password to `/etc/kopia/password` (`sudo make password`), then
-`sudo make install local-connect` and `sudo KOPIA_CONFIG_PATH=/etc/kopia/local.config kb restore
-root@<host>:/home/<user> /home/<user>.restored`. Without this tooling,
-`kopia repository connect filesystem --path <LOCAL_REPO>` and `kopia restore` do the same.
+Restoring onto a fresh OS (Arch: `pacman -S kopia jq rsync`): mount the disk at the same path
+(`LABEL=kopia` on `/mnt/kopia`), clone this repo, `sudo make password`, then
+`sudo make install connect` and
+`sudo REPO=local kb restore root@<host>:/home/<user> /home/<user>.restored`. Without this
+tooling, `kopia repository connect filesystem --path <LOCAL_REPO>` and `kopia restore` do the
+same.
 
 ## Safety boundaries
 

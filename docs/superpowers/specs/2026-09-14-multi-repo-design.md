@@ -1,9 +1,11 @@
 # mia: Ubuntu -> Omarchy migration, step 1: local kopia repository on the Samsung
 
-Status at end of session 1 (2026-09-14): design settled, nothing on disk touched yet.
-The committed code on branch `local-repo` (commit b1f248f, `make local-*` targets) is
-SUPERSEDED by the design below and should be reworked, not built on. The spec is also
-committed in the repo at `docs/superpowers/specs/2026-09-14-multi-repo-design.md`.
+Status: Part A (repo changes) done and committed on `local-repo` (session 2, 2026-09-14),
+exercised against a fake kopia; not yet installed with `sudo make install`. Parts B and C are
+Glenn's to run. Two deviations from Part A as written: no `RequiresMountsFor` (a dependency
+failure would not trigger OnFailure, so a missing disk would go unnotified; instead `repo_env`
+checks the mountpoint and every command fails loudly), and `ReadWritePaths=-/mnt/kopia` (the
+`-` makes systemd ignore it when absent).
 
 ## Context
 

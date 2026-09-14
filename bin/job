@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
-# Runs one snapshot or verification job at a time. `online` is the systemd condition that skips
-# scheduled work while the B2 endpoint is unavailable. A snapshot without a terminal keeps
-# kopia's counters and ETA in $STATE_DIRECTORY/progress (see `make progress`) rather than in the
-# journal, which gets only kopia's messages.
+# Runs one snapshot or verification job at a time, against every configured repository in turn;
+# an unavailable repository fails the job rather than being skipped. A snapshot without a
+# terminal keeps kopia's counters and ETA in $STATE_DIRECTORY/progress (see `make progress`)
+# rather than in the journal, which gets only kopia's messages.
 set -euo pipefail
 . "$(dirname "$(readlink -f "$0")")/env.sh"
-job="${1:?usage: $0 online|snapshot|verify}"
-if [ "$job" = online ]; then getent ahosts "$B2_ENDPOINT" >/dev/null; exit; fi   # ExecCondition: offline = skip the run, not a failure
+job="${1:?usage: $0 snapshot|verify}"
 
 state="${STATE_DIRECTORY:-/var/lib/kopia}"
 lock="$state/job.lock"
@@ -23,7 +22,7 @@ progress() { # stdin: kopia output. Progress lines (\r-prefixed, unterminated) r
       case $line in
         '') ;;
         *' hashing, '*) printf '%s\n%s\n' "$src" "$line" > "$f.new" && mv -f "$f.new" "$f" ;;
-        *) [[ $line == Snapshotting* ]] && src=$line; echo "$line" ;;
+        *) [[ $line == Snapshotting* ]] && src="[$REPO] $line"; echo "$line" ;;
       esac
     done <<<"$chunk"
     [ "$rc" -eq 0 ] || [ "$rc" -gt 128 ] || break   # EOF
@@ -31,10 +30,13 @@ progress() { # stdin: kopia output. Progress lines (\r-prefixed, unterminated) r
   rm -f "$f"
 }
 
+snapshot() {
+  if [ -t 2 ]; then kopia snapshot create "${SOURCES[@]}"
+  else kopia snapshot create --progress --progress-update-interval=30s "${SOURCES[@]}" 2>&1 | progress "$state/progress"; fi
+}
+
 case "$job" in
-  snapshot)
-    if [ -t 2 ]; then exec kopia snapshot create "${SOURCES[@]}"; fi   # fd 9 stays open in kopia, so the lock lasts the whole run
-    kopia snapshot create --progress --progress-update-interval=30s "${SOURCES[@]}" 2>&1 | progress "$state/progress" ;;
-  verify)   exec kopia snapshot verify --verify-files-percent="$VERIFY_PERCENT" ;;
-  *) echo "usage: $0 online|snapshot|verify" >&2; exit 1 ;;
+  snapshot) for_each_repo snapshot ;;
+  verify)   for_each_repo kopia snapshot verify --verify-files-percent="$VERIFY_PERCENT" ;;
+  *) echo "usage: $0 snapshot|verify" >&2; exit 1 ;;
 esac

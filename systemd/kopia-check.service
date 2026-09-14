@@ -6,14 +6,13 @@ OnFailure=kopia-notify@%n.service
 
 [Service]
 Type=oneshot
-ExecCondition=/opt/backup/bin/job online
 ExecStart=/opt/backup/bin/check
 StateDirectory=kopia
 CapabilityBoundingSet=CAP_DAC_READ_SEARCH
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/etc/kopia
+ReadWritePaths=/etc/kopia -/mnt/kopia
 CacheDirectory=kopia
 LogsDirectory=kopia
 PrivateTmp=yes

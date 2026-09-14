@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Imports policies/global.json, then policies/hosts/$HOST.json if present, into every
+# repository, and caps file size under each /home/*/src. Never uses --delete-other-policies:
+# the B2 repository holds other hosts' policies too.
+set -euo pipefail
+. "$(dirname "$(readlink -f "$0")")/env.sh"
+cap=${SRC_CAP:-1073741824}
+
+policy_one() {
+  local d
+  kopia policy import --from-file "$BACKUP_DIR/policies/global.json"
+  if [ -f "$BACKUP_DIR/policies/hosts/$HOST.json" ]; then kopia policy import --from-file "$BACKUP_DIR/policies/hosts/$HOST.json"; fi
+  for d in /home/*/src; do
+    if [ -d "$d" ]; then kopia policy set "root@$HOST:$d" --max-file-size="$cap" >/dev/null; echo "max file size $cap under $d"; fi
+  done
+  kopia policy show --global
+}
+
+for_each_repo policy_one
