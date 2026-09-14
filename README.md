@@ -50,7 +50,7 @@ policies belonging to other hosts. See [policies/README.md](policies/README.md).
 `LOCAL_REPO` in a host config names a directory on a local disk (its parent must be a
 mountpoint) that holds a second, independent repository: same password, same sources, same
 policies, its own config file (`/etc/kopia/local.config`) and cache. It is not a mirror of B2.
-Every job writes or reads both repositories in turn, B2 first, and fails, with the usual
+Every job writes or reads both repositories in turn, local first because it is faster, and fails, with the usual
 notification, if either is unavailable: nothing is skipped because a disk is unmounted or B2
 is unreachable. `sudo make connect` offers to create it, `make status`, `make check` and
 `make verify` cover it, and `REPO=local` points single-repository commands at it:

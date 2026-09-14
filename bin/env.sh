@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Sourced by backup commands. Loads shared and host configuration, then exports credentials read
 # from root-only files in /etc/kopia; it is not intended to be executed directly.
-# Repositories: `b2` always, `local` when LOCAL_REPO is set. Each has its own kopia config file
-# and cache. After sourcing, kopia addresses $REPO (default b2; `REPO=local kb ...`);
+# Repositories: `local` when LOCAL_REPO is set, then `b2` always; the fast one first, so a job
+# queued behind a slow upload still gets the local copy done early. Each has its own kopia
+# config file and cache. After sourcing, kopia addresses $REPO (default b2; `REPO=local kb ...`);
 # for_each_repo runs a command against every repository in turn.
 BACKUP_DIR="${BACKUP_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 KOPIA_ETC="${KOPIA_ETC:-/etc/kopia}"
@@ -20,8 +21,9 @@ export AWS_SECRET_ACCESS_KEY="$(secret b2-key)"     # so they never appear on a 
 export KOPIA_LOG_DIR="${KOPIA_LOG_DIR:-/var/log/kopia}"
 export KOPIA_CHECK_FOR_UPDATES=false
 
-REPOS=(b2)
+REPOS=()
 [ -z "${LOCAL_REPO:-}" ] || REPOS+=(local)
+REPOS+=(b2)
 
 repo_env() { # point kopia at repository $1: config file, cache, and for local, the disk must be mounted
   local r
