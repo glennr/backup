@@ -4,16 +4,19 @@ PREFIX := /opt/backup
 ETC    := /etc/kopia
 UNITS  := /etc/systemd/system
 KB     := $(PREFIX)/bin/kb
+LOCAL_CONFIG := $(ETC)/local.config
+KBL    := KOPIA_CONFIG_PATH=$(LOCAL_CONFIG) $(KB)
 HOST   ?= $(shell hostname -s | tr A-Z a-z)
 SRC_CAP ?= 1073741824
 TIMERS := kopia-snapshot.timer kopia-verify.timer kopia-check.timer
 
-.PHONY: all help install secrets password key connect disconnect policy snapshot start log progress verify check schedule unschedule status retention ui audit lint hooks uninstall root
+.PHONY: all help install secrets password key connect disconnect policy snapshot start log progress verify check schedule unschedule status retention ui audit lint hooks uninstall root \
+        local-create local-connect local-snapshot local-verify local-restore-test local-status
 
 all: install secrets connect policy schedule start status ## (default) bring this machine up; prompts only for missing secrets; first snapshot runs in the background
 
 help: ## list targets
-	@grep -hE '^[a-z]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
+	@grep -hE '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
 
 install: root ## install dependencies, files, and systemd units
 	bin/install
@@ -105,6 +108,30 @@ uninstall: root ## remove timers, units, /opt/backup and kb. Leaves /etc/kopia, 
 	rm -f $(UNITS)/kopia-*.service $(UNITS)/kopia-*.timer /usr/local/bin/kb
 	systemctl daemon-reload
 	rm -rf $(PREFIX)
+
+local-create: root ## create the second, local repository at LOCAL_REPO (config) with this host's password, then import policies
+	$(PREFIX)/bin/local create
+	@$(MAKE) --no-print-directory policy KB="$(KBL)"
+
+local-connect: root ## connect to an existing local repository (after a reinstall, or from another OS)
+	$(PREFIX)/bin/local connect
+
+local-snapshot: root ## snapshot the configured SOURCES into the local repository, in the foreground
+	KOPIA_CONFIG_PATH=$(LOCAL_CONFIG) $(PREFIX)/bin/job snapshot
+
+local-verify: root ## read back every file in the local repository and check it
+	$(KBL) snapshot verify --verify-files-percent=100
+
+local-restore-test: root ## restore the newest local snapshot of DIR (default /etc) to a temp dir and diff it against the live tree
+	@set -e; dir=$(or $(DIR),/etc); tmp=$$(mktemp -d /var/tmp/kopia-restore.XXXXXX); trap 'rm -rf "$$tmp"' EXIT; \
+	$(KBL) restore "root@$(HOST):$$dir" "$$tmp"; \
+	n=$$(diff -rq "$$dir" "$$tmp" | tee /dev/stderr | wc -l); \
+	echo "$$n difference(s) between $$dir and its newest local snapshot (0 expected, unless files changed since)"
+
+local-status: root ## local repository: connection, snapshots, maintenance
+	$(KBL) repository status
+	$(KBL) snapshot list
+	$(KBL) maintenance info
 
 root:
 	@test "$$(id -u)" = 0 || { echo "needs root: sudo make $(MAKECMDGOALS)" >&2; exit 1; }

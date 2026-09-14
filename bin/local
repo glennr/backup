@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Second repository on a local disk, configured by LOCAL_REPO. `connect` joins an existing one,
+# `create` makes a new one. The connection lives in its own config file next to the B2 one, so
+# `KOPIA_CONFIG_PATH=/etc/kopia/local.config kb ...` addresses it; the Makefile's local-* targets
+# do that. Refuses to touch LOCAL_REPO unless its parent directory is a mountpoint, so a missing
+# disk cannot turn into a repository on the root filesystem.
+set -euo pipefail
+. "$(dirname "$(readlink -f "$0")")/env.sh"
+action="${1:?usage: $0 create|connect}"
+
+[ -n "${LOCAL_REPO:-}" ] || { echo "LOCAL_REPO empty in config; set it in config/hosts/$HOST.conf" >&2; exit 1; }
+[ -n "$KOPIA_PASSWORD" ] || { echo "no repository password in $KOPIA_ETC; run 'sudo make password'" >&2; exit 1; }
+mountpoint -q "$(dirname "$LOCAL_REPO")" || { echo "$(dirname "$LOCAL_REPO") is not a mountpoint; refusing" >&2; exit 1; }
+
+export KOPIA_CONFIG_PATH="$KOPIA_ETC/local.config" KOPIA_CACHE_DIRECTORY="$KOPIA_CACHE_DIRECTORY/local"
+backend=(filesystem --path="$LOCAL_REPO")
+client=(--no-persist-credentials --override-hostname="$HOST" --override-username=root
+        --cache-directory="$KOPIA_CACHE_DIRECTORY")
+
+case "$action" in
+  connect)
+    if [ -f "$KOPIA_CONFIG_PATH" ]; then
+      echo "already connected via $KOPIA_CONFIG_PATH (kopia repository disconnect --config-file=$KOPIA_CONFIG_PATH to change)"
+    else
+      kopia repository connect "${backend[@]}" "${client[@]}"
+    fi ;;
+  create)
+    [ ! -f "$KOPIA_CONFIG_PATH" ] || { echo "already connected via $KOPIA_CONFIG_PATH; not creating" >&2; exit 1; }
+    [ ! -e "$LOCAL_REPO/kopia.repository" ] || { echo "$LOCAL_REPO already holds a repository; use 'sudo make local-connect'" >&2; exit 1; }
+    install -d -m 700 "$LOCAL_REPO"
+    kopia repository create "${backend[@]}" "${client[@]}" --encryption=AES256-GCM-HMAC-SHA256 ;;
+  *) echo "usage: $0 create|connect" >&2; exit 1 ;;
+esac
+kopia repository status

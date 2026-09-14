@@ -45,6 +45,29 @@ Policies are imported into the shared repository, first from `policies/global.js
 from an optional host file. Do not use Kopia's `--delete-other-policies`: it would remove
 policies belonging to other hosts. See [policies/README.md](policies/README.md).
 
+## Local repository
+
+`LOCAL_REPO` in a host config names a directory on a local disk (its parent must be a
+mountpoint) that holds a second repository, used for fast restores and OS migrations. It is
+independent of the B2 connection: same password, same sources, same policies, its own config
+file (`/etc/kopia/local.config`) and cache. Nothing schedules it; run it by hand.
+
+```sh
+sudo make local-create        # new repository at LOCAL_REPO, policies imported
+sudo make local-connect       # join an existing one (after a reinstall, or from another OS)
+sudo make local-snapshot      # snapshot SOURCES into it, foreground
+sudo make local-verify        # read back every file
+sudo make local-restore-test  # restore newest /etc snapshot to a temp dir, diff against live (DIR=/home/x for another)
+sudo make local-status
+sudo KOPIA_CONFIG_PATH=/etc/kopia/local.config kb snapshot list   # any other kopia command against it
+```
+
+Restoring onto a fresh OS: install `kopia`, `jq` and `rsync`, mount the disk at the same path,
+clone this repo, write the password to `/etc/kopia/password` (`sudo make password`), then
+`sudo make install local-connect` and `sudo KOPIA_CONFIG_PATH=/etc/kopia/local.config kb restore
+root@<host>:/home/<user> /home/<user>.restored`. Without this tooling,
+`kopia repository connect filesystem --path <LOCAL_REPO>` and `kopia restore` do the same.
+
 ## Safety boundaries
 
 - The B2 bucket must have Object Lock enabled before the repository is created. Retention
