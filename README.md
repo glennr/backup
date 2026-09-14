@@ -24,6 +24,7 @@ The B2 master key is used only to create a per-host application key (`sudo make 
 sudo make status                 # timers, snapshots, maintenance owner
 sudo make snapshot               # snapshot now, foreground
 sudo make start                  # snapshot now, via systemd
+sudo make progress               # the running snapshot's counters and ETA
 sudo make check                  # freshness/history check (maintenance owner)
 sudo make retention              # repository object-lock settings
 sudo kb snapshot list -a         # all hosts
