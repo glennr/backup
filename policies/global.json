@@ -27,6 +27,7 @@
         "/*/.local/share/*/",
         "!/*/.local/share/keybase/",
         "!/*/.local/share/keyrings/",
+        "!/*/.local/share/yadm/",
         "/*/.zoom/",
         "/*/.pulumi/plugins/",
         "/*/.lmstudio/extensions/",
