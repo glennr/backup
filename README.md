@@ -88,7 +88,7 @@ set; without it the other host cannot read a blob this one wrote.
 ```sh
 groupadd -r kopia-repo
 useradd -r -g kopia-repo -d / -s /usr/bin/nologin kopia-sftp
-install -d -m 700 /etc/ssh/authorized_keys.d
+install -d -m 755 /etc/ssh/authorized_keys.d   # sshd reads authorized_keys as the account itself
 chown -R root:kopia-repo /mnt/kopia/repo                    # one time, over the whole repository
 find /mnt/kopia/repo -type d -exec chmod 2770 {} +
 find /mnt/kopia/repo -type f -exec chmod 660 {} +
