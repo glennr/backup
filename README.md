@@ -126,13 +126,17 @@ the scan before you keep the file.
 ```sh
 ssh-keygen -t ed25519 -N '' -C 'kopia backup <client>' -f /etc/kopia/ssh-key
 chmod 600 /etc/kopia/ssh-key
-ssh-keyscan -t ed25519 vega > /etc/kopia/known-hosts
-ssh-keygen -lf /etc/kopia/known-hosts                       # must match the server's fingerprint
+ssh-keyscan vega > /etc/kopia/known-hosts                   # every key type, not just ed25519
+ssh-keygen -lf /etc/kopia/known-hosts                       # the ED25519 line must match the server
 ```
 
 Give `LOCAL_HOST` a name that `/etc/hosts` answers, such as `10.10.20.10 vega`. kopia resolves
 names itself and does not use mDNS, so `vega.local` fails with `server misbehaving` even on a
 machine where `getent hosts vega.local` answers. The name in `known-hosts` must be the same one.
+
+Scan every host key type. kopia does not ask for a particular one, so the server picks, and a
+file holding only the ed25519 key fails with `knownhosts: key mismatch` when the server answers
+with another.
 
 Append `/etc/kopia/ssh-key.pub` to `/etc/ssh/authorized_keys.d/kopia-sftp` on the server, set
 `LOCAL_REPO`, `LOCAL_HOST` and `LOCAL_USER` in the client's host config, then `sudo make connect`
