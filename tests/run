@@ -99,7 +99,7 @@ is "broomhilda leaves the umask alone, sshd forces one" "0022" \
 echo "connect: broomhilda reaches vega over SFTP"
 FAKE_CONNECT=ok FAKE_MOUNTPOINT=/nowhere run_connect broomhilda >/dev/null
 has "uses the sftp backend"        "repository connect sftp --path=/repo"
-has "names the host"               "--host=vega.local"
+has "names the host"               "--host=vega"
 has "names the user"               "--username=kopia-sftp"
 has "reads the key from /etc/kopia" "--keyfile=$TMP/etc/ssh-key"
 has "pins the host key"            "--known-hosts=$TMP/etc/known-hosts"
