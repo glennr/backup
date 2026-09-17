@@ -9,7 +9,7 @@ HOST   ?= $(shell hostname -s | tr A-Z a-z)
 SRC_CAP ?= 1073741824
 TIMERS := kopia-snapshot.timer kopia-verify.timer kopia-check.timer
 
-.PHONY: all help install secrets password key connect disconnect policy snapshot start log progress verify check restore-test schedule unschedule status retention ui audit lint hooks uninstall root
+.PHONY: all help install secrets password key connect disconnect policy snapshot start log progress verify check restore-test schedule unschedule status retention ui test audit lint hooks uninstall root
 
 all: install secrets connect policy schedule start status ## (default) bring this machine up; prompts only for missing secrets; first snapshot runs in the background
 
@@ -87,6 +87,9 @@ ui: root ## kopia web UI at http://127.0.0.1:51515, foreground, ctrl-c stops it.
 	echo "  (401 in the UI = browser cached a previous run's page: hard-refresh, ctrl-shift-r)"; echo; \
 	exec $(KB) server start --ui --insecure --address=http://127.0.0.1:51515 --refresh-interval=1m \
 	  --server-username=kopia --server-password="$$pw" --ui-preferences-file=$(ETC)/ui-preferences.json
+
+test: ## run bin/ against a fake kopia: repository selection, backends, guards. No root, no repository touched
+	@bash -n bin/* tests/run && tests/run
 
 audit: ## what the rules keep and drop per top-level entry of a home (DIR=/home/x; default yours). No root, throwaway repo
 	SRC_CAP=$(SRC_CAP) bin/audit $(DIR)

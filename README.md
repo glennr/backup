@@ -151,6 +151,8 @@ a network, and a second repository created over the top orphans every snapshot i
 
 ## Development
 
-Run `make audit` after changing ignore rules (what they keep and drop per top-level entry of a
-home, no root, throwaway repository) and `make lint` before committing; `make hooks` installs the same secret check as a pre-commit
-hook. Syntax checks are `bash -n bin/*` and `systemd-analyze verify systemd/*.service`.
+Run `make test` after changing anything under `bin/` (repository selection, backends and guards
+against a fake kopia, no root, no repository touched), `make audit` after changing ignore rules
+(what they keep and drop per top-level entry of a home, no root, throwaway repository), and
+`make lint` before committing. `make hooks` installs the same secret check as a pre-commit
+hook. `make test` already runs `bash -n`. `systemd-analyze verify systemd/*.service` covers the units.

@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+# Exercises bin/env.sh and bin/connect with a fake kopia on PATH: no root, no network, and no
+# repository is touched. Everything is written under one temporary directory. `make test` runs it.
+#
+# The fakes stand in for the three commands that would otherwise need a real machine: kopia,
+# hostname (so one machine can answer as another host), and mountpoint.
+set -uo pipefail
+
+BACKUP_SRC="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+TMP=$(mktemp -d "${TMPDIR:-/tmp}/kopia-tests.XXXXXX")
+trap 'rm -rf "$TMP"' EXIT
+pass=0 fail=0
+
+fail() { echo "  FAIL: $*"; fail=$((fail + 1)); }
+ok()   { pass=$((pass + 1)); }
+
+has() { # $1 description, $2 pattern: the fake kopia was called with it
+  if grep -qF -- "$2" "$TMP/calls"; then ok; else fail "$1"$'\n'"    wanted: $2"$'\n'"    calls:  $(cat "$TMP/calls")"; fi
+}
+hasnt() { # $1 description, $2 pattern: the fake kopia was never called with it
+  if grep -qF -- "$2" "$TMP/calls"; then fail "$1"$'\n'"    unwanted: $2"; else ok; fi
+}
+is() { # $1 description, $2 want, $3 got
+  if [ "$2" = "$3" ]; then ok; else fail "$1"$'\n'"    want: $2"$'\n'"    got:  $3"; fi
+}
+
+# --- fakes ------------------------------------------------------------------------------------
+mkdir -p "$TMP/bin" "$TMP/etc" "$TMP/disk"
+
+cat > "$TMP/bin/hostname" <<'EOF'
+#!/bin/sh
+echo "$FAKE_HOST"
+EOF
+
+# FAKE_CONNECT picks what `kopia repository connect` does: ok, uninitialized, or refused.
+cat > "$TMP/bin/kopia" <<'EOF'
+#!/bin/sh
+echo "$*" >> "$FAKE_CALLS"
+if [ "$1 $2" = "repository connect" ]; then
+  case "${FAKE_CONNECT:-ok}" in
+    uninitialized) echo "ERROR repository not initialized"; exit 1 ;;
+    refused)       echo "ERROR dial tcp: connect: connection refused"; exit 1 ;;
+  esac
+fi
+exit 0
+EOF
+
+# Only FAKE_MOUNTPOINT is a mountpoint, so an unmounted disk is testable.
+cat > "$TMP/bin/mountpoint" <<'EOF'
+#!/bin/sh
+[ "$2" = "${FAKE_MOUNTPOINT:-}" ]
+EOF
+
+chmod +x "$TMP/bin"/*
+export PATH="$TMP/bin:$PATH" FAKE_CALLS="$TMP/calls"
+
+# The real config, so a mistake in a committed host file fails here, plus one synthetic host.
+mkdir -p "$TMP/backup"
+cp -r "$BACKUP_SRC/config" "$TMP/backup/config"
+cat > "$TMP/backup/config/hosts/testhost.conf" <<EOF
+LOCAL_REPO=$TMP/disk/repo
+EOF
+: > "$TMP/backup/config/hosts/plainhost.conf"
+export BACKUP_DIR="$TMP/backup" KOPIA_ETC="$TMP/etc"
+printf 'pw'    > "$TMP/etc/password"
+printf 'keyid' > "$TMP/etc/b2-key-id"
+printf 'key'   > "$TMP/etc/b2-key"
+printf 'k'     > "$TMP/etc/ssh-key"
+printf 'h'     > "$TMP/etc/known-hosts"
+
+run_env() { FAKE_HOST="$1" bash -c ". '$BACKUP_SRC/bin/env.sh' >/dev/null 2>&1; $2" 2>&1; }
+run_connect() { : > "$TMP/calls"; FAKE_HOST="$1" "$BACKUP_SRC/bin/connect" > "$TMP/out" 2>&1; echo $?; }
+
+# --- which repositories a host has ---------------------------------------------------------
+echo "repository list"
+is "vega has both repositories"       "local b2" "$(run_env vega       'echo "${REPOS[*]}"')"
+is "broomhilda has both repositories" "local b2" "$(run_env broomhilda 'echo "${REPOS[*]}"')"
+is "a host with no LOCAL_REPO is B2 only" "b2"   "$(run_env plainhost  'echo "${REPOS[*]}"')"
+
+# --- the guards in repo_env ------------------------------------------------------------------
+echo "guards"
+is "vega refuses an unmounted disk" "1" \
+  "$(FAKE_MOUNTPOINT=/nowhere run_env vega 'repo_env local >/dev/null 2>&1; echo $?')"
+is "vega accepts a mounted disk" "0" \
+  "$(FAKE_MOUNTPOINT=/mnt/kopia run_env vega 'repo_env local >/dev/null 2>&1; echo $?')"
+is "broomhilda needs no mountpoint, the disk is on another host" "0" \
+  "$(FAKE_MOUNTPOINT=/nowhere run_env broomhilda 'repo_env local >/dev/null 2>&1; echo $?')"
+
+# kopia masks its file modes with the umask, so the host that shares its disk must widen it.
+echo "umask"
+is "vega widens the umask for the shared local repository" "0007" \
+  "$(FAKE_MOUNTPOINT=/mnt/kopia run_env vega 'repo_env local 2>/dev/null; umask')"
+is "vega leaves the umask alone for B2" "0022" \
+  "$(run_env vega 'umask 0022; repo_env b2 2>/dev/null; umask')"
+is "broomhilda leaves the umask alone, sshd forces one" "0022" \
+  "$(run_env broomhilda 'umask 0022; repo_env local 2>/dev/null; umask')"
+
+# --- the backend each host connects with ------------------------------------------------------
+echo "connect: broomhilda reaches vega over SFTP"
+FAKE_CONNECT=ok FAKE_MOUNTPOINT=/nowhere run_connect broomhilda >/dev/null
+has "uses the sftp backend"        "repository connect sftp --path=/repo"
+has "names the host"               "--host=vega.local"
+has "names the user"               "--username=kopia-sftp"
+has "reads the key from /etc/kopia" "--keyfile=$TMP/etc/ssh-key"
+has "pins the host key"            "--known-hosts=$TMP/etc/known-hosts"
+has "keeps this host's identity"   "--override-hostname=broomhilda --override-username=root"
+hasnt "never embeds credentials"   "--embed-credentials"
+
+echo "connect: vega uses its attached disk"
+FAKE_CONNECT=ok FAKE_MOUNTPOINT=/mnt/kopia run_connect vega >/dev/null
+has "uses the filesystem backend"  "repository connect filesystem --path=/mnt/kopia/repo"
+has "gives new files a shared group" "--owner-uid=root --owner-gid=kopia-repo"
+has "makes new files group-writable" "--file-mode=0660 --dir-mode=0770"
+has "still connects to B2"         "repository connect s3 --bucket="
+
+echo "connect: a plain local disk keeps kopia's own modes"
+FAKE_CONNECT=ok FAKE_MOUNTPOINT="$TMP/disk" run_connect testhost >/dev/null
+has "no mode flags without LOCAL_GROUP" "repository connect filesystem --path=$TMP/disk/repo "
+hasnt "no owner flags without LOCAL_GROUP" "--owner-gid"
+
+# --- creating a repository --------------------------------------------------------------------
+echo "creation"
+FAKE_CONNECT=uninitialized FAKE_MOUNTPOINT="$TMP/disk" KOPIA_CREATE=yes run_connect testhost >/dev/null
+has "an empty attached disk is offered a new repository" "repository create filesystem --path=$TMP/disk/repo"
+
+FAKE_CONNECT=refused FAKE_MOUNTPOINT=/nowhere KOPIA_CREATE=yes run_connect broomhilda >/dev/null
+hasnt "an unreachable host never creates a second repository" "repository create sftp"
+
+FAKE_CONNECT=uninitialized FAKE_MOUNTPOINT=/nowhere KOPIA_CREATE=yes run_connect broomhilda >/dev/null
+hasnt "nor does an empty-looking path on another host" "repository create sftp"
+
+echo "missing credentials"
+mv "$TMP/etc/ssh-key" "$TMP/etc/ssh-key.away"
+FAKE_CONNECT=ok FAKE_MOUNTPOINT=/nowhere run_connect broomhilda >/dev/null
+hasnt "no SFTP connect without a key" "repository connect sftp"
+grep -q "ssh-key" "$TMP/out" && ok || fail "the error names the missing key"
+mv "$TMP/etc/ssh-key.away" "$TMP/etc/ssh-key"
+
+echo
+echo "$pass passed, $fail failed"
+[ "$fail" -eq 0 ]
