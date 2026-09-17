@@ -51,9 +51,10 @@ policies belonging to other hosts. See [policies/README.md](policies/README.md).
 
 ## Local repository
 
-`LOCAL_REPO` in a host config names a directory on a local disk (its parent must be a
-mountpoint) that holds a second, independent repository: same password, same sources, same
-policies, its own config file (`/etc/kopia/local.config`) and cache. It is not a mirror of B2.
+`LOCAL_REPO` in a host config names a directory on a local disk (its parent must be a mountpoint,
+unless `LOCAL_HOST` puts the disk on another host, below) that holds a second, independent
+repository: same password, same sources, same policies, its own config file
+(`/etc/kopia/local.config`) and cache. It is not a mirror of B2.
 Every job writes or reads both repositories in turn, local first because it is faster, and fails, with the usual
 notification, if either is unavailable: nothing is skipped because a disk is unmounted or B2
 is unreachable. `sudo make connect` offers to create it, `make status`, `make check` and
@@ -74,11 +75,76 @@ Restoring onto a fresh OS (Arch: `pacman -S kopia jq rsync`): mount the disk at 
 tooling, `kopia repository connect filesystem --path <LOCAL_REPO>` and `kopia restore` do the
 same.
 
+### Reaching it from another host
+
+A host without the disk attached reaches the same repository over SFTP, so both hosts snapshot
+into it. The disk's host exports it through SSH. The other host sets `LOCAL_HOST` and connects
+with kopia's SFTP backend. vega holds the disk today and broomhilda is the client.
+
+On the host with the disk, set `LOCAL_GROUP` in its host config and create the export. kopia
+masks its file modes with the umask, so `bin/env.sh` sets `umask 0007` whenever `LOCAL_GROUP` is
+set; without it the other host cannot read a blob this one wrote.
+
+```sh
+groupadd -r kopia-repo
+useradd -r -g kopia-repo -d / -s /usr/bin/nologin kopia-sftp
+install -d -m 700 /etc/ssh/authorized_keys.d
+chown -R root:kopia-repo /mnt/kopia/repo                    # one time, over the whole repository
+find /mnt/kopia/repo -type d -exec chmod 2770 {} +
+find /mnt/kopia/repo -type f -exec chmod 660 {} +
+chmod 700 /mnt/kopia/wd                                     # anything else on the disk is inside the chroot
+```
+
+`/etc/ssh/sshd_config.d/50-kopia.conf` chroots the account to the mountpoint, so the repository
+path the client asks for is `/repo`, not `/mnt/kopia/repo`. The chroot directory must be
+root-owned and not group-writable, which is why it is `/mnt/kopia` and not the repository itself.
+
+```
+ListenAddress 10.10.20.10
+PermitRootLogin no
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+AllowUsers kopia-sftp
+Match User kopia-sftp
+    AuthorizedKeysFile /etc/ssh/authorized_keys.d/%u
+    ChrootDirectory /mnt/kopia
+    ForceCommand internal-sftp -u 0007
+    AllowAgentForwarding no
+    AllowTcpForwarding no
+    PermitTunnel no
+    X11Forwarding no
+```
+
+`AllowUsers kopia-sftp` refuses every other SSH login. Add your own account to that line if you
+want a shell on this host. Then `sshd -t`, `systemctl enable --now sshd`, and allow the client
+through the firewall: `ufw allow from <client address> to any port 22 proto tcp`.
+
+On the client, mint a key for the backup jobs and pin the server's host key. Read the server's
+own fingerprint with `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` and compare it against
+the scan before you keep the file.
+
+```sh
+ssh-keygen -t ed25519 -N '' -C 'kopia backup <client>' -f /etc/kopia/ssh-key
+chmod 600 /etc/kopia/ssh-key
+ssh-keyscan -t ed25519 vega.local > /etc/kopia/known-hosts
+ssh-keygen -lf /etc/kopia/known-hosts                       # must match the server's fingerprint
+```
+
+Append `/etc/kopia/ssh-key.pub` to `/etc/ssh/authorized_keys.d/kopia-sftp` on the server, set
+`LOCAL_REPO`, `LOCAL_HOST` and `LOCAL_USER` in the client's host config, then `sudo make connect`
+and `sudo make snapshot`. `sudo REPO=local kb snapshot list -a` is the test that matters: it
+fails if the client cannot read a blob the server wrote.
+
+The client never creates this repository. A connect failure and an empty path look the same over
+a network, and a second repository created over the top orphans every snapshot in the first.
+
 ## Safety boundaries
 
 - The B2 bucket must have Object Lock enabled before the repository is created. Retention
   settings are fixed at creation; changes affect future objects only.
 - A shared repository means root on any host with its credentials can read every host backup.
+- A host that reaches the local repository over SFTP can also delete blobs in it. The local
+  repository has no object lock. B2 object lock is the defense against a compromised host.
 - Object lock delays deletion; it is not an alerting mechanism. The maintenance owner runs the
   daily freshness and snapshot-count check.
 - `make uninstall` deliberately preserves `/etc/kopia`, cache, logs, and repository data.

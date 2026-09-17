@@ -2,9 +2,10 @@
 # Sourced by backup commands. Loads shared and host configuration, then exports credentials read
 # from root-only files in /etc/kopia; it is not intended to be executed directly.
 # Repositories: `local` when LOCAL_REPO is set, then `b2` always; the fast one first, so a job
-# queued behind a slow upload still gets the local copy done early. Each has its own kopia
-# config file and cache. After sourcing, kopia addresses $REPO (default b2; `REPO=local kb ...`);
-# for_each_repo runs a command against every repository in turn.
+# queued behind a slow upload still gets the local copy done early. `local` is a disk attached to
+# this machine, or, when LOCAL_HOST is set, the same disk on another host over SFTP. Each has its
+# own kopia config file and cache. After sourcing, kopia addresses $REPO (default b2;
+# `REPO=local kb ...`); for_each_repo runs a command against every repository in turn.
 BACKUP_DIR="${BACKUP_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 KOPIA_ETC="${KOPIA_ETC:-/etc/kopia}"
 HOST="$(hostname -s | tr '[:upper:]' '[:lower:]')"
@@ -25,7 +26,7 @@ REPOS=()
 [ -z "${LOCAL_REPO:-}" ] || REPOS+=(local)
 REPOS+=(b2)
 
-repo_env() { # point kopia at repository $1: config file, cache, and for local, the disk must be mounted
+repo_env() { # point kopia at repository $1: config file, cache, and for an attached local disk, it must be mounted
   local r
   for r in "${REPOS[@]}"; do [ "$r" = "$1" ] && break; done
   [ "$r" = "$1" ] || { echo "unknown repository '$1' (configured: ${REPOS[*]})" >&2; return 1; }
@@ -33,7 +34,14 @@ repo_env() { # point kopia at repository $1: config file, cache, and for local, 
   case $1 in
     b2)    export KOPIA_CACHE_DIRECTORY="$CACHE_DIR" ;;
     local) export KOPIA_CACHE_DIRECTORY="$CACHE_DIR/local"
-           mountpoint -q "$(dirname "$LOCAL_REPO")" || { echo "$(dirname "$LOCAL_REPO") is not a mountpoint; local repository $LOCAL_REPO unavailable" >&2; return 1; } ;;
+           # kopia masks its --file-mode and --dir-mode with the umask, so 0660 would land as 0640
+           # and the hosts sharing the disk could not write each other's blobs.
+           [ -z "${LOCAL_GROUP:-}" ] || umask 0007
+           # An unmounted disk is the dangerous case: kopia would happily make a second repository
+           # on the root filesystem. Over SFTP it cannot, and its own error names the host, so the
+           # guard applies to an attached disk only.
+           [ -n "${LOCAL_HOST:-}" ] ||
+             mountpoint -q "$(dirname "$LOCAL_REPO")" || { echo "$(dirname "$LOCAL_REPO") is not a mountpoint; local repository $LOCAL_REPO unavailable" >&2; return 1; } ;;
   esac
 }
 

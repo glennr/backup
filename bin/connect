@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Connects this host to every configured repository or, after confirmation, creates the missing
 # ones. Creating the B2 repository sets the configured object-lock retention and makes this host
-# the maintenance owner. The local repository is only touched if its parent is a mountpoint.
+# the maintenance owner. The local repository is only touched if its parent is a mountpoint, and
+# when it lives on another host (LOCAL_HOST) this host connects over SFTP and never creates it.
 set -euo pipefail
 . "$(dirname "$(readlink -f "$0")")/env.sh"
 
@@ -34,13 +35,30 @@ connect_one() {
       echo "$out" >&2; return 1
     fi
   else
-    local backend=(filesystem --path="$LOCAL_REPO") out
+    local backend out
+    if [ -n "${LOCAL_HOST:-}" ]; then
+      [ -n "${LOCAL_USER:-}" ] || { echo "LOCAL_HOST is set but LOCAL_USER is empty" >&2; return 1; }
+      [ -r "$KOPIA_ETC/ssh-key" ] && [ -r "$KOPIA_ETC/known-hosts" ] ||
+        { echo "no $KOPIA_ETC/ssh-key or $KOPIA_ETC/known-hosts; see README.md" >&2; return 1; }
+      backend=(sftp --path="$LOCAL_REPO" --host="$LOCAL_HOST" --username="$LOCAL_USER" \
+               --keyfile="$KOPIA_ETC/ssh-key" --known-hosts="$KOPIA_ETC/known-hosts")
+    else
+      # LOCAL_GROUP makes new files readable and writable by the other hosts that share the disk;
+      # kopia's defaults are 0600 root, which they could not read.
+      backend=(filesystem --path="$LOCAL_REPO")
+      [ -z "${LOCAL_GROUP:-}" ] ||
+        backend+=(--owner-uid=root --owner-gid="$LOCAL_GROUP" --file-mode=0660 --dir-mode=0770)
+    fi
     # Ask kopia whether a repository is there, as the b2 branch does. Testing for a blob file by
     # name cannot work: the filesystem backend suffixes them (kopia.repository.f) and sharded
     # layouts move them, so a name test reports "no repository" for a perfectly good one and
     # offers to create a second over the top.
     if out=$(kopia repository connect "${backend[@]}" "${client[@]}" 2>&1); then
       echo "$out"
+    elif [ -n "${LOCAL_HOST:-}" ]; then
+      # The disk's own host created it. An unreachable link looks exactly like an empty one, and
+      # creating a second repository over the top would silently orphan every snapshot here.
+      echo "$out" >&2; return 1
     elif [[ "$out" == *"repository not initialized"* || "$out" == *"cannot access storage path"* ]]; then
       echo "$LOCAL_REPO has no repository yet."
       confirm "create a NEW repository there, this machine as maintenance owner?"
