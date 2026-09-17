@@ -113,7 +113,12 @@ Match User kopia-sftp
     AllowTcpForwarding no
     PermitTunnel no
     X11Forwarding no
+Match all
 ```
+
+The trailing `Match all` closes the block. `Include /etc/ssh/sshd_config.d/*.conf` sits near the
+top of `sshd_config`, so without it the `Match` swallows every setting parsed afterwards, in the
+rest of `sshd_config` and in the distribution's own defaults file.
 
 `AllowUsers kopia-sftp` refuses every other SSH login. Add your own account to that line if you
 want a shell on this host. Then `sshd -t`, `systemctl enable --now sshd`, and allow the client
