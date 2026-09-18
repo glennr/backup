@@ -42,4 +42,19 @@ install -d -m 700 /etc/kopia /var/log/kopia
 if [ -f /etc/kopia/repository.config ] && [ ! -e /etc/kopia/b2.config ]; then mv /etc/kopia/repository.config /etc/kopia/b2.config; fi
 if [ -f /var/lib/kopia/snapshot-count ] && [ ! -e /var/lib/kopia/snapshot-count.b2 ]; then mv /var/lib/kopia/snapshot-count /var/lib/kopia/snapshot-count.b2; fi
 install -m 644 "$BACKUP_DIR"/systemd/* /etc/systemd/system/
+# The jobs run without CAP_DAC_OVERRIDE, so on the host holding a shared local disk their access to
+# the blobs another host wrote over SFTP is the one LOCAL_GROUP grants. Root owns most of the
+# repository and needs no help there, which is why the first foreign shard is what fails. The units
+# are installed unchanged on every host, and a host without the disk has no such group, so the
+# membership goes in a drop-in written only where LOCAL_GROUP is set.
+for unit in kopia-snapshot kopia-check kopia-verify; do
+  dropin=/etc/systemd/system/$unit.service.d
+  if [ -n "${LOCAL_GROUP:-}" ]; then
+    install -d -m 755 "$dropin"
+    printf '[Service]\nSupplementaryGroups=%s\n' "$LOCAL_GROUP" > "$dropin/local-group.conf"
+    chmod 644 "$dropin/local-group.conf"
+  else
+    rm -f "$dropin/local-group.conf"
+  fi
+done
 systemctl daemon-reload

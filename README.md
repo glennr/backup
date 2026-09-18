@@ -85,6 +85,13 @@ On the host with the disk, set `LOCAL_GROUP` in its host config and create the e
 masks its file modes with the umask, so `bin/env.sh` sets `umask 0007` whenever `LOCAL_GROUP` is
 set; without it the other host cannot read a blob this one wrote.
 
+The group is not only for the client. The jobs keep `CAP_DAC_READ_SEARCH` and drop
+`CAP_DAC_OVERRIDE`, so root can read anything on the disk but writes under ordinary permission
+checks. The blobs the other host wrote are root's only through the group, so `bin/install` puts
+`SupplementaryGroups=$LOCAL_GROUP` in a drop-in for the three job units. Rerun `bin/install` after
+setting `LOCAL_GROUP`; a snapshot that reaches a foreign shard without it fails the flush with
+`permission denied`.
+
 ```sh
 groupadd -r kopia-repo
 useradd -r -g kopia-repo -d / -s /usr/bin/nologin kopia-sftp
