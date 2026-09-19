@@ -136,6 +136,48 @@ hasnt "no SFTP connect without a key" "repository connect sftp"
 grep -q "ssh-key" "$TMP/out" && ok || fail "the error names the missing key"
 mv "$TMP/etc/ssh-key.away" "$TMP/etc/ssh-key"
 
+# --- what bin/install is willing to put in /opt/backup -----------------------------------------
+# The guard sits ahead of the root check, so a clean tree gets as far as "needs root" and a dirty
+# one never does. That is the whole of what can be exercised without root, and it is the part that
+# decides whether a host runs a commit or somebody's working copy.
+echo "install refuses a working tree git cannot account for"
+git -C "$TMP/backup" init -q
+git -C "$TMP/backup" -c user.email=t@t -c user.name=t commit -qam init --allow-empty
+git -C "$TMP/backup" add -A
+git -C "$TMP/backup" -c user.email=t@t -c user.name=t commit -qm files
+
+run_install() { "$BACKUP_SRC/bin/install" 2>&1; }
+is "a clean tree gets past the guard" "1" \
+  "$(run_install | grep -c 'needs root')"
+echo '# edited' >> "$TMP/backup/config/hosts/plainhost.conf"   # tracked, and not this host's file
+out=$(run_install)
+case "$out" in
+  *"uncommitted changes"*) ok ;;
+  *) fail "a modified tracked file is refused"$'\n'"    got: $out" ;;
+esac
+case "$out" in
+  *"plainhost.conf"*) ok ;;
+  *) fail "the refusal names the file"$'\n'"    got: $out" ;;
+esac
+git -C "$TMP/backup" checkout -q -- config/hosts/plainhost.conf
+
+mkdir -p "$TMP/backup/systemd"
+echo '[Service]' > "$TMP/backup/systemd/rogue.service"     # untracked, and units bypass the export
+case "$(run_install)" in
+  *"needs root"*) ok ;;
+  *) fail "an untracked unit file must not block the install, only be left out of it" ;;
+esac
+# The install itself needs root, so this is a source assertion, not a behavioural one: a tripwire
+# against the units drifting back to reading the working tree, which is how they escaped once.
+grep -q 'tmp/opt"/systemd' "$BACKUP_SRC/bin/install" && ok || fail "units install from the export, not the working tree"
+rm -rf "$TMP/backup/systemd"
+
+echo junk > "$TMP/backup/entities.json"
+case "$(run_install)" in
+  *"uncommitted changes"*) fail "an ignored or untracked file must not block the install" ;;
+  *) ok ;;
+esac
+
 echo
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

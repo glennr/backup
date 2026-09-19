@@ -11,9 +11,14 @@ cd ~/src/glennr/backup
 sudo make
 ```
 
-`sudo make` installs dependencies, copies this checkout to `/opt/backup`, obtains missing
+`sudo make` installs dependencies, exports this checkout's HEAD to `/opt/backup`, obtains missing
 secrets, connects to the repository, imports policies, enables timers, and starts a snapshot.
 Review changes before running it: the installed copy runs as root.
+
+What runs on a host is a commit, never a working copy. The install refuses a tree with modified
+tracked files, so a fix reaches `/opt/backup` only once it is in history and `git log` stays an
+honest account of what the host is running. Untracked and ignored files are not installed at all,
+which keeps agent configuration and editor state off the host. Commit or stash, then install.
 
 Secrets are stored only on the host in `/etc/kopia/`: `password`, `b2-key-id`, and `b2-key`.
 The B2 master key is used only to create a per-host application key (`sudo make key`).

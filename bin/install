@@ -4,7 +4,16 @@
 set -euo pipefail
 here=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
 . "$here/bin/env.sh"
+# /opt/backup runs as root, so what lands there must be something git can account for. A tracked
+# file that differs from HEAD would leave the host running code no commit describes. Untracked
+# files are not the check's business: HEAD is what gets installed, so they never arrive. Outside a
+# checkout git fails here and takes the install with it, which is the right answer when the
+# question cannot be asked at all.
+dirty=$(git -C "$BACKUP_DIR" status --porcelain --untracked-files=no)
+[ -z "$dirty" ] || { printf 'uncommitted changes in %s:\n%s\ncommit or stash them; /opt/backup runs as root\n' \
+  "$BACKUP_DIR" "$dirty" >&2; exit 1; }
 [ "$(id -u)" = 0 ] || { echo "needs root: sudo bin/install" >&2; exit 1; }
+tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 case "$(uname -m)" in x86_64) arch=x64 ;; aarch64) arch=arm64 ;; *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;; esac
 apt=; command -v apt-get >/dev/null && apt=1
 
@@ -19,7 +28,6 @@ elif [ -n "$apt" ]; then
   echo "installed: $(kopia --version)"
 else
   base="https://github.com/kopia/kopia/releases/download/v$KOPIA_VERSION"; tarball="kopia-$KOPIA_VERSION-linux-$arch.tar.gz"
-  tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
   curl -fsSL -o "$tmp/$tarball" "$base/$tarball"
   curl -fsSL -o "$tmp/checksums.txt" "$base/checksums.txt"
   (cd "$tmp" && sha256sum -c --ignore-missing --quiet checksums.txt)
@@ -34,14 +42,20 @@ if ! command -v jq >/dev/null; then
 fi
 
 install -d -m 755 /opt/backup
-rsync -a --delete --exclude .git --chown=root:root --chmod=D755,F644 "$BACKUP_DIR/" /opt/backup/
+# Export HEAD rather than copy the working tree. The tree also carries ignored files -- agent
+# configuration, editor state -- and rsync honours no .gitignore, so they would be installed too.
+# Exporting makes /opt/backup exactly one commit, and --delete clears out whatever earlier
+# installs left behind.
+mkdir "$tmp/opt"
+git -C "$BACKUP_DIR" archive --format=tar HEAD | tar -x -C "$tmp/opt"
+rsync -a --delete --chown=root:root --chmod=D755,F644 "$tmp/opt/" /opt/backup/
 chmod 755 /opt/backup/bin/*
 ln -sf /opt/backup/bin/kb /usr/local/bin/kb
 install -d -m 700 /etc/kopia /var/log/kopia
 # one-time renames from before the second repository existed
 if [ -f /etc/kopia/repository.config ] && [ ! -e /etc/kopia/b2.config ]; then mv /etc/kopia/repository.config /etc/kopia/b2.config; fi
 if [ -f /var/lib/kopia/snapshot-count ] && [ ! -e /var/lib/kopia/snapshot-count.b2 ]; then mv /var/lib/kopia/snapshot-count /var/lib/kopia/snapshot-count.b2; fi
-install -m 644 "$BACKUP_DIR"/systemd/* /etc/systemd/system/
+install -m 644 "$tmp/opt"/systemd/* /etc/systemd/system/
 # The jobs run without CAP_DAC_OVERRIDE, so on the host holding a shared local disk their access to
 # the blobs another host wrote over SFTP is the one LOCAL_GROUP grants. Root owns most of the
 # repository and needs no help there, which is why the first foreign shard is what fails. The units
