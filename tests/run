@@ -36,6 +36,10 @@ EOF
 cat > "$TMP/bin/kopia" <<'EOF'
 #!/bin/sh
 echo "$*" >> "$FAKE_CALLS"
+# Enough of a repository for bin/check to run: this host owns maintenance, and no snapshots, so
+# the freshness and shrink arms both pass and a failure can only have come from the disk probe.
+if [ "$1 $2" = "maintenance info" ]; then echo "{\"owner\":\"${FAKE_OWNER:-root@$FAKE_HOST}\"}"; exit 0; fi
+if [ "$1 $2" = "snapshot list" ]; then echo '[]'; exit 0; fi
 if [ "$1 $2" = "repository connect" ]; then
   case "${FAKE_CONNECT:-ok}" in
     uninitialized) echo "ERROR repository not initialized"; exit 1 ;;
@@ -135,6 +139,40 @@ FAKE_CONNECT=ok FAKE_MOUNTPOINT=/nowhere run_connect broomhilda >/dev/null
 hasnt "no SFTP connect without a key" "repository connect sftp"
 grep -q "ssh-key" "$TMP/out" && ok || fail "the error names the missing key"
 mv "$TMP/etc/ssh-key.away" "$TMP/etc/ssh-key"
+
+# --- the local disk stays writable --------------------------------------------------------------
+# The shared disk is the one place root meets directories it does not own, and losing access there
+# surfaces as a failed index flush hours later. bin/check should say so first.
+echo "check notices a local repository it cannot write"
+mkdir -p "$TMP/disk/repo/x/n4_"
+run_check() { FAKE_HOST="$1" STATE_DIRECTORY="$TMP/state" "$BACKUP_SRC/bin/check" 2>&1; }
+
+out=$(FAKE_MOUNTPOINT="$TMP/disk" run_check testhost) && rc=0 || rc=$?
+is "a writable disk passes" "0" "$rc"
+case "$out" in *"writable throughout"*) ok ;; *) fail "it says the disk is writable"$'\n'"    got: $out" ;; esac
+
+chmod 0500 "$TMP/disk/repo/x/n4_"
+out=$(FAKE_MOUNTPOINT="$TMP/disk" run_check testhost) && rc=0 || rc=$?
+is "an unwritable directory fails the check" "1" "$rc"
+case "$out" in *"UNWRITABLE"*n4_*) ok ;; *) fail "the failure names the directory"$'\n'"    got: $out" ;; esac
+chmod 2770 "$TMP/disk/repo/x/n4_"
+
+# Maintenance belongs to one host; writing does not. A host that owns neither must still say when
+# it cannot write, or the early return swallows the one thing it did learn.
+chmod 0500 "$TMP/disk/repo/x/n4_"
+out=$(FAKE_OWNER=root@elsewhere FAKE_MOUNTPOINT="$TMP/disk" run_check testhost) && rc=0 || rc=$?
+is "a non-owner still fails on an unwritable disk" "1" "$rc"
+case "$out" in *"not the maintenance owner"*) ok ;; *) fail "it still defers maintenance"$'\n'"    got: $out" ;; esac
+chmod 2770 "$TMP/disk/repo/x/n4_"
+out=$(FAKE_OWNER=root@elsewhere FAKE_MOUNTPOINT="$TMP/disk" run_check testhost) && rc=0 || rc=$?
+is "a non-owner with a healthy disk passes" "0" "$rc"
+
+# broomhilda reaches the disk over SFTP as kopia-sftp, so its own credentials say nothing about it.
+out=$(FAKE_MOUNTPOINT=/nowhere run_check broomhilda)
+case "$out" in
+  *"writable throughout"*|*"UNWRITABLE"*) fail "a repository on another host must not be probed locally"$'\n'"    got: $out" ;;
+  *) ok ;;
+esac
 
 # --- what bin/install is willing to put in /opt/backup -----------------------------------------
 # The guard sits ahead of the root check, so a clean tree gets as far as "needs root" and a dirty

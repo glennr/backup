@@ -5,10 +5,32 @@ set -euo pipefail
 . "$(dirname "$(readlink -f "$0")")/env.sh"
 statedir="${STATE_DIRECTORY:-/var/lib/kopia}"
 
+# An attached disk shared with another host holds directories that host created, and root is not
+# their owner. Its access is the one LOCAL_GROUP grants, and losing it fails a snapshot's index
+# flush rather than anything that looks like a permission problem. `-writable` asks the kernel with
+# this process's own credentials, which is the real question -- but only while CAP_DAC_OVERRIDE is
+# absent, as it is under the job units and is not in a root shell. Say so rather than pass and
+# mislead. Read CapPrm, not CapEff: access(2) is what find asks, and for a real uid of 0 the kernel
+# consults the permitted set, which is also the conservative field either way. One offender is
+# enough; this is a tripwire, not an audit.
+writable_one() {
+  local bad
+  [ "$REPO" = local ] && [ -z "${LOCAL_HOST:-}" ] || return 0
+  if (( 0x$(awk '/^CapPrm:/{print $2}' /proc/self/status) & (1 << 1) )); then
+    echo "writable: not tested, CAP_DAC_OVERRIDE bypasses it; kopia-check.service is what asks"
+    return 0
+  fi
+  bad=$(find "$LOCAL_REPO" -type d ! -writable -printf '%p (%u:%g %m)' -quit)
+  [ -z "$bad" ] || { echo "UNWRITABLE: $bad; a snapshot fails its index flush there"; return 1; }
+  echo "ok: $LOCAL_REPO writable throughout"
+}
+
 check_one() {
   local state="$statedir/snapshot-count.$REPO" owner snaps now max rc=0 host newest age count prev
+  writable_one || rc=1
   owner=$(kopia maintenance info --json | jq -er .owner)
-  [ "$owner" = "root@$HOST" ] || { echo "not the maintenance owner ($owner is); nothing to do"; return 0; }
+  # Maintenance belongs to one host, but writing does not: return what writable_one found.
+  [ "$owner" = "root@$HOST" ] || { echo "not the maintenance owner ($owner is); nothing else to do"; return $rc; }
 
   snaps=$(kopia snapshot list -a --json)
   now=$(date +%s); max=$((MAX_SNAPSHOT_AGE_HOURS * 3600))

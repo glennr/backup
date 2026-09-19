@@ -46,6 +46,12 @@ sudo make ui                     # temporary UI on localhost
 `config/hosts/<hostname>.conf` overrides it. `SOURCES` in a host file replaces the default;
 use `SOURCES+=(...)` to add a source.
 
+`make check` also asks whether an attached local repository is still writable. A disk shared with
+another host holds directories that host created, which root reaches only through `LOCAL_GROUP`;
+lose that access and a snapshot fails its index flush, several hours before anyone looks. The
+probe uses the running process's own credentials, so a root shell with `CAP_DAC_OVERRIDE` cannot
+answer the question and says so instead of passing. `kopia-check.service` is what tests it.
+
 `RETIRED_HOSTS` lists hosts that have been decommissioned. Their snapshots stay in the
 repository and stay restorable, and they still count toward `make check`'s shrink guard; only
 the freshness check skips them, so a retired host does not fail the daily check forever.
