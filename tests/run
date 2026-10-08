@@ -36,10 +36,14 @@ EOF
 cat > "$TMP/bin/kopia" <<'EOF'
 #!/bin/sh
 echo "$*" >> "$FAKE_CALLS"
-# Enough of a repository for bin/check to run: this host owns maintenance, and no snapshots, so
-# the freshness and shrink arms both pass and a failure can only have come from the disk probe.
+# Enough of a repository for bin/check to run: this host owns maintenance and has one snapshot from
+# just now, so the freshness and shrink arms both pass unless FAKE_SNAPSHOTS says otherwise.
 if [ "$1 $2" = "maintenance info" ]; then echo "{\"owner\":\"${FAKE_OWNER:-root@$FAKE_HOST}\"}"; exit 0; fi
-if [ "$1 $2" = "snapshot list" ]; then echo '[]'; exit 0; fi
+if [ "$1 $2" = "snapshot list" ]; then
+  if [ -n "${FAKE_SNAPSHOTS:-}" ]; then echo "$FAKE_SNAPSHOTS"
+  else echo "[{\"source\":{\"host\":\"$FAKE_HOST\"},\"endTime\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}]"; fi
+  exit 0
+fi
 if [ "$1 $2" = "repository connect" ]; then
   case "${FAKE_CONNECT:-ok}" in
     uninitialized) echo "ERROR repository not initialized"; exit 1 ;;
@@ -173,6 +177,26 @@ case "$out" in
   *"writable throughout"*|*"UNWRITABLE"*) fail "a repository on another host must not be probed locally"$'\n'"    got: $out" ;;
   *) ok ;;
 esac
+
+# --- freshness is this host's own business ----------------------------------------------------
+# Every host alerts about itself when a snapshot fails. A laptop that is off for a week must not
+# raise an alarm on the maintenance owner.
+echo "check judges freshness by this host's own snapshots"
+snap() { printf '{"source":{"host":"%s"},"endTime":"%s"}' "$1" "$(date -u -d "-$2 hours" +%Y-%m-%dT%H:%M:%SZ)"; }
+fresh_check() { rm -rf "$TMP/state"; FAKE_SNAPSHOTS="$2" FAKE_MOUNTPOINT="$TMP/disk" run_check "$1"; }
+
+out=$(fresh_check testhost "[$(snap testhost 1),$(snap broomhilda 300)]") && rc=0 || rc=$?
+is "another host's stale snapshots do not fail the check" "0" "$rc"
+case "$out" in *broomhilda*) fail "another host is not mentioned"$'\n'"    got: $out" ;; *) ok ;; esac
+
+out=$(fresh_check testhost "[$(snap testhost 30),$(snap broomhilda 1)]") && rc=0 || rc=$?
+is "this host's stale snapshot fails the check" "1" "$rc"
+case "$out" in *"STALE: testhost newest snapshot is 30h old"*) ok ;; *) fail "the failure names this host and its age"$'\n'"    got: $out" ;; esac
+
+out=$(fresh_check testhost "[$(snap broomhilda 1)]") && rc=0 || rc=$?
+is "no snapshots of this host fails the check" "1" "$rc"
+case "$out" in *"STALE: testhost has no snapshots"*) ok ;; *) fail "it says this host has none"$'\n'"    got: $out" ;; esac
+rm -rf "$TMP/state"
 
 # --- what bin/install is willing to put in /opt/backup -----------------------------------------
 # The guard sits ahead of the root check, so a clean tree gets as far as "needs root" and a dirty

@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# For each repository this host maintains, fails for stale hosts or a halved snapshot count. The
-# count state persists until a successful check or manual acknowledgement removes it.
+# For each repository this host maintains, fails when this host's own newest snapshot is stale or the
+# snapshot count has halved. Other hosts' freshness is theirs to report: each alerts about itself,
+# and a laptop that is off for a week is no alarm here. The count state persists until a successful
+# check or manual acknowledgement removes it.
 set -euo pipefail
 . "$(dirname "$(readlink -f "$0")")/env.sh"
 statedir="${STATE_DIRECTORY:-/var/lib/kopia}"
@@ -26,7 +28,7 @@ writable_one() {
 }
 
 check_one() {
-  local state="$statedir/snapshot-count.$REPO" owner snaps now max rc=0 host newest age count prev
+  local state="$statedir/snapshot-count.$REPO" owner snaps now max rc=0 newest age count prev
   writable_one || rc=1
   owner=$(kopia maintenance info --json | jq -er .owner)
   # Maintenance belongs to one host, but writing does not: return what writable_one found.
@@ -34,12 +36,13 @@ check_one() {
 
   snaps=$(kopia snapshot list -a --json)
   now=$(date +%s); max=$((MAX_SNAPSHOT_AGE_HOURS * 3600))
-  while IFS=$'\t' read -r host newest; do
-    if [[ " ${RETIRED_HOSTS[*]:-} " == *" $host "* ]]; then echo "retired: $host (last $newest)"; continue; fi
+  newest=$(jq -r --arg h "$HOST" '[.[] | select(.source.host == $h) | .endTime] | max // empty' <<<"$snaps")
+  if [ -z "$newest" ]; then echo "STALE: $HOST has no snapshots"; rc=1
+  else
     age=$(( now - $(date -d "$newest" +%s) ))
-    if [ "$age" -gt "$max" ]; then echo "STALE: $host newest snapshot is $((age / 3600))h old ($newest)"; rc=1
-    else echo "ok: $host $((age / 3600))h"; fi
-  done < <(jq -r 'group_by(.source.host)[] | [.[0].source.host, (map(.endTime) | max)] | @tsv' <<<"$snaps")
+    if [ "$age" -gt "$max" ]; then echo "STALE: $HOST newest snapshot is $((age / 3600))h old ($newest)"; rc=1
+    else echo "ok: $HOST $((age / 3600))h"; fi
+  fi
 
   count=$(jq length <<<"$snaps"); prev=$(cat "$state" 2>/dev/null || echo 0)
   if [ "$count" -lt $((prev / 2)) ]; then

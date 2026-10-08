@@ -52,9 +52,9 @@ lose that access and a snapshot fails its index flush, several hours before anyo
 probe uses the running process's own credentials, so a root shell with `CAP_DAC_OVERRIDE` cannot
 answer the question and says so instead of passing. `kopia-check.service` is what tests it.
 
-`RETIRED_HOSTS` lists hosts that have been decommissioned. Their snapshots stay in the
-repository and stay restorable, and they still count toward `make check`'s shrink guard; only
-the freshness check skips them, so a retired host does not fail the daily check forever.
+The freshness check looks only at this host's own snapshots. Every host alerts about itself: a
+failed hourly snapshot pops up on the machine it ran on, so a laptop that is off for days, or a
+decommissioned host, raises nothing on the maintenance owner.
 
 Policies are imported into the shared repository, first from `policies/global.json` and then
 from an optional host file. Do not use Kopia's `--delete-other-policies`: it would remove
